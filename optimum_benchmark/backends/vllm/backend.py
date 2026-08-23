@@ -71,6 +71,11 @@ class VLLMBackend(Backend[VLLMConfig]):
         return inputs
 
     def get_sampling_params(self, kwargs: Dict[str, Any]) -> SamplingParams:
+        # logits_processors is no longer a per-request SamplingParams field as of
+        # vLLM 0.19: it moved to engine and model level config, and SamplingParams
+        # now validates against that config rather than accepting one itself.
+        # Passing it raises TypeError during warmup, so every vLLM benchmark fails
+        # before measuring anything.
         return SamplingParams(
             ignore_eos=True,
             detokenize=True,
@@ -78,7 +83,6 @@ class VLLMBackend(Backend[VLLMConfig]):
             n=kwargs.get("num_return_sequences"),
             max_tokens=kwargs.get("max_new_tokens"),
             min_tokens=kwargs.get("min_new_tokens"),
-            logits_processors=kwargs.get("logits_processors", None),
         )
 
     def batch_offline_engine_generate(self, inputs: Dict[str, Any], kwargs: Dict[str, Any]) -> Any:
