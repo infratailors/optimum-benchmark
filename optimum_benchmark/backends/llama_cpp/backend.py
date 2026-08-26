@@ -34,11 +34,16 @@ class LlamaCppBackend(Backend[LlamaCppConfig]):
 
     @property
     def llama_cpp_kwargs(self) -> Dict[str, Any]:
+        # model_kwargs used to be dropped here, so llama-cpp-python ran on its
+        # defaults: n_gpu_layers=0 (CPU inference, whatever the build) and
+        # n_ctx=512 (any longer prompt fails). Forward them so a config can set
+        # n_gpu_layers, n_ctx, n_batch, flash_attn and the rest of Llama().
         return {
             "embedding": self.config.task == "feature-extraction",
             "filename": self.config.filename,
             "verbose": False,
             "echo": False,
+            **self.config.model_kwargs,
         }
 
     def prepare_inputs(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
