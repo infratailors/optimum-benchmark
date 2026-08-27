@@ -1,3 +1,4 @@
+import inspect
 import shutil
 from collections import OrderedDict
 from tempfile import TemporaryDirectory
@@ -51,8 +52,60 @@ class TRTLLMBackend(Backend[TRTLLMConfig]):
         self.pretrained_model = self.trtllm_loader.from_pretrained(
             self.config.model,
             **self.config.model_kwargs,
-            **self.trtllm_kwargs,
+            **self.loader_kwargs,
         )
+
+    @property
+    def loader_kwargs(self) -> Dict[str, Any]:
+        """The engine limits, in the form the installed optimum-nvidia takes them.
+
+        Up to 0.1.0b8 the loader took dtype, max_input_len, max_output_len and
+        max_batch_size as flat keyword arguments. 0.1.0b9 takes an ExportConfig
+        object and ignores unknown keywords, so flat limits are dropped and the
+        engine is built for the model's full context (131072 tokens for Llama
+        3.1), which does not fit a 24 GB card and crashes the process. Translate
+        when the loader asks for export_config.
+        """
+        flat = self.trtllm_kwargs
+        target = getattr(self.trtllm_loader, "_from_pretrained", None) or self.trtllm_loader.from_pretrained
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            return flat
+        if "export_config" not in parameters:
+            return flat
+
+        from optimum.nvidia.export import ExportConfig
+
+        export_config = ExportConfig.from_config(
+            self.pretrained_config, max_batch_size=int(flat.get("max_batch_size") or 1)
+        )
+        if flat.get("dtype"):
+            export_config.dtype = str(flat["dtype"])
+        if flat.get("max_input_len"):
+            export_config.max_input_len = int(flat["max_input_len"])
+        if flat.get("max_output_len"):
+            export_config.max_output_len = int(flat["max_output_len"])
+        if flat.get("optimization_level") is not None:
+            export_config.optimization_level = int(flat["optimization_level"])
+        if flat.get("tp") or flat.get("pp"):
+            export_config.with_sharding(
+                tp=int(flat.get("tp") or 1),
+                pp=int(flat.get("pp") or 1),
+                gpus_per_node=int(flat.get("gpus_per_node") or 8),
+            )
+        export_config.validate()
+
+        translated = {"dtype", "max_input_len", "max_output_len", "max_batch_size", "optimization_level", "tp", "pp", "gpus_per_node", "world_size"}
+        dropped = sorted(key for key in flat if key not in translated)
+        if dropped:
+            self.logger.warning(f"\t+ The installed optimum-nvidia takes no {', '.join(dropped)}; ignored")
+        self.logger.info(
+            f"\t+ Building the TensorRT-LLM engine for max_input_len={export_config.max_input_len}, "
+            f"max_output_len={export_config.max_output_len}, max_batch_size={export_config.max_batch_size}, "
+            f"dtype={export_config.dtype}"
+        )
+        return {"export_config": export_config}
 
     @property
     def trtllm_kwargs(self):
