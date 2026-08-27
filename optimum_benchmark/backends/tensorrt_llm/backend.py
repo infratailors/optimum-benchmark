@@ -84,8 +84,15 @@ class TRTLLMBackend(Backend[TRTLLMConfig]):
             export_config.dtype = str(flat["dtype"])
         if flat.get("max_input_len"):
             export_config.max_input_len = int(flat["max_input_len"])
+        # ExportConfig.max_output_len is the total sequence length (it becomes the
+        # builder's max_seq_len), not the number of generated tokens. TRTLLMConfig
+        # follows the generate() convention, so the two add up. The first engine
+        # built with max_seq_len 1024 under max_input_len 2048 aborted the process.
         if flat.get("max_output_len"):
-            export_config.max_output_len = int(flat["max_output_len"])
+            export_config.max_output_len = export_config.max_input_len + int(flat["max_output_len"])
+        # Left at -1, optimum-nvidia infers batch * max_input_len / 2, which with
+        # packed input caps the usable prompt at half the configured length.
+        export_config.max_num_tokens = export_config.max_batch_size * export_config.max_input_len
         if flat.get("optimization_level") is not None:
             export_config.optimization_level = int(flat["optimization_level"])
         if flat.get("tp") or flat.get("pp"):
@@ -102,7 +109,8 @@ class TRTLLMBackend(Backend[TRTLLMConfig]):
             self.logger.warning(f"\t+ The installed optimum-nvidia takes no {', '.join(dropped)}; ignored")
         self.logger.info(
             f"\t+ Building the TensorRT-LLM engine for max_input_len={export_config.max_input_len}, "
-            f"max_output_len={export_config.max_output_len}, max_batch_size={export_config.max_batch_size}, "
+            f"max_output_len={export_config.max_output_len} (total sequence), max_num_tokens={export_config.max_num_tokens}, "
+            f"max_batch_size={export_config.max_batch_size}, "
             f"dtype={export_config.dtype}"
         )
         return {"export_config": export_config}
