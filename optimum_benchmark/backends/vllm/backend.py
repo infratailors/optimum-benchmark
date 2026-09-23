@@ -64,7 +64,12 @@ class VLLMBackend(Backend[VLLMConfig]):
 
     def prepare_inputs(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         if self.config.task in TEXT_GENERATION_TASKS:
-            inputs = {"prompts": self.pretrained_processor.batch_decode(inputs["input_ids"])}
+            # Hand vLLM the token ids themselves. Decoding them to text and letting
+            # vLLM tokenize again changes the length: 1024 random ids came back as
+            # 1043 to 1061 tokens with gpt-oss's tokenizer, so the benchmark
+            # measured a longer prompt than configured, and failed outright once
+            # max_model_len was set to exactly input plus output tokens.
+            inputs = {"prompts": [{"prompt_token_ids": ids.tolist()} for ids in inputs["input_ids"]]}
         else:
             raise NotImplementedError(f"vLLM does not support task {self.config.task}")
 
