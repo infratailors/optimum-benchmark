@@ -15,8 +15,8 @@ from transformers import (
     GenerationConfig,
     ImageProcessingMixin,
     PretrainedConfig,
+    PreTrainedTokenizerBase,
     ProcessorMixin,
-    SpecialTokensMixin,
 )
 
 from ..task_utils import TASKS_TO_AUTO_MODEL_CLASS_NAMES, map_from_synonym_task
@@ -42,7 +42,11 @@ def get_transformers_auto_model_class_for_task(task: str, model_type: Optional[s
     raise ValueError(f"Task {task} not supported for model type {model_type}")
 
 
-PretrainedProcessor = Union["FeatureExtractionMixin", "ImageProcessingMixin", "SpecialTokensMixin", "ProcessorMixin"]
+# transformers 5 removed SpecialTokensMixin; PreTrainedTokenizerBase, which it was
+# a base of in 4.x, names every tokenizer in both lines.
+PretrainedProcessor = Union[
+    "FeatureExtractionMixin", "ImageProcessingMixin", "PreTrainedTokenizerBase", "ProcessorMixin"
+]
 
 
 def get_transformers_pretrained_config(model: str, **kwargs) -> "PretrainedConfig":
@@ -92,7 +96,9 @@ def get_flat_artifact_dict(artifact: Union["PretrainedConfig", "PretrainedProces
         artifact_dict.update(
             {k: v for k, v in artifact.__dict__.items() if isinstance(v, (int, str, float, bool, list, tuple, dict))}
         )
-        for attribute in artifact.attributes:
+        # transformers 5 replaced the `attributes` class list with `get_attributes()`
+        attributes = artifact.get_attributes() if hasattr(artifact, "get_attributes") else artifact.attributes
+        for attribute in attributes:
             artifact_dict.update(get_flat_artifact_dict(getattr(artifact, attribute)))
     elif hasattr(artifact, "to_dict"):
         artifact_dict.update(
